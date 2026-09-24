@@ -1761,14 +1761,13 @@ namespace PeachPDF.Tests.Integration
             Assert.Equal(mc.ClientRight - mc.ClientLeft, abs.ActualRight - abs.Location.X, 1);
         }
 
-        // A known boundary, pre-existing and characterized here rather than left silent. CssBox's own
-        // content dispatch tests ContainsInlinesOnly *before* EstablishesMultiColumnContext, and
-        // ContainsInlinesOnly is "every child is inline" - vacuously true of a box whose children are all
-        // text. So a multi-column container holding nothing but text takes the inline branch and never
-        // reaches this engine at all. Columnizing it needs its inline content wrapped in an anonymous
-        // block first, which is a box-generation question rather than a fragmentation one.
+        // css-multicol-1 §3: a container fragments its content across the column boxes, text
+        // included. Getting there needs the inline run wrapped in an anonymous block first
+        // (DomParser.CorrectInlineBoxesParent) -- a box-generation step, not a fragmentation one --
+        // because CssBox's own content dispatch tests ContainsInlinesOnly before
+        // EstablishesMultiColumnContext, and the inline branch it picks knows nothing of columns.
         [Fact]
-        public async Task InlineOnlyContent_DoesNotColumnize_KnownBoundary()
+        public async Task InlineOnlyContent_Columnizes()
         {
             var html = Wrap("<div id='mc' style='columns:2; column-gap:0; width:200px'>"
                             + "Plain text with no block child of its own, long enough that two columns "
@@ -1776,14 +1775,19 @@ namespace PeachPDF.Tests.Integration
             var (root, _) = await BuildAndLayout(html, pageHeight: 400);
 
             var mc = FindById(root, "mc")!;
-            var xs = LayoutHarness.Descendants(mc).SelectMany(b => b.Words)
-                .Select(w => System.Math.Round(w.Left)).DefaultIfEmpty(0).ToList();
+            var words = LayoutHarness.Descendants(mc).SelectMany(b => b.Words).ToList();
 
-            // The text uses the container's whole width rather than a column's - two columns of a 150pt
-            // container would each be ~75pt wide. And no rule is drawn, because no column was made.
-            Assert.True(xs.Max() - xs.Min() > 100,
-                $"expected the text to span the whole container rather than one column, got X {xs.Min()}..{xs.Max()}");
-            Assert.Null(mc.ColumnRuleSegments);
+            Assert.NotEmpty(words);
+
+            // 200px of container is 150pt, so with no gap each column is 75pt.
+            var left = words.Min(w => w.Left);
+            var boundary = left + 75;
+
+            Assert.Contains(words, w => w.Left >= boundary - 1);
+            Assert.All(
+                words.Where(w => w.Left < boundary - 1),
+                w => Assert.True(w.Right <= boundary + 1,
+                    $"a first-column word ran past the column at {boundary}, to {w.Right}"));
         }
 
         // ─── Break values in the column context (css-break-3 §3.1 `column`, §3.2 `avoid-column`) ──────

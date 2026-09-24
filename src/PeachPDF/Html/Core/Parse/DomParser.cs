@@ -3015,11 +3015,39 @@ namespace PeachPDF.Html.Core.Parse
             var isFlexOrGridContainer = box.Display.Value is DisplayMode.Flex or DisplayMode.InlineFlex
                 or DisplayMode.Grid or DisplayMode.InlineGrid;
 
+            // A multi-column container holding nothing but inline content gets the same wrapper,
+            // though its children do not vary. Without it the box reads as inlines-only and
+            // CssBox.LayoutContents sends it to CreateLineBoxes, which knows nothing of columns, so
+            // the content runs as one column across the full measure instead of being fragmented
+            // across the column boxes (css-multicol-1 §3). Widening that dispatch instead does not
+            // work: the columns engine fragments block-level content, and handed a box of bare
+            // inline content it drops words outright (TableCellBreakTokenTests' own
+            // every-word-exactly-once check catches it). The wrapper gives it the shape it needs.
+            //
+            // Not applied to a box holding floats: that one already reaches the engine on its own
+            // (DomUtils.ContainsInlinesOnly reports true for a float, but CssBox's dispatch has its
+            // own disjunct for it), so a wrapper would only add a box level.
+            //
+            // Not applied under a vertical writing mode either, where the engine is the worse of the
+            // two paths rather than the better one. Measured on a `vertical-rl; column-count: 2`
+            // box 225pt x 90pt holding one run of text: through CreateVerticalLineBoxes the content
+            // stays inside the box (72pt x 58pt), and through the columns engine it leaves the box
+            // entirely, stacking into a single 511pt run down the page. So the orthogonal-flow
+            // limitation MonolithicContent.IsUnresumableOrthogonalFlow tracks is a real one, not an
+            // artefact of this dispatch, and routing around it here would trade a visible
+            // one-column layout for a broken one.
+            var wrapsInlineRunForColumns =
+                box.EstablishesMultiColumnContext
+                && box.Boxes.Count > 0
+                && DomUtils.ContainsInlinesOnly(box)
+                && !box.Boxes.Any(b => b.IsFloated)
+                && box.WritingMode.Value is not (CSS.WritingMode.VerticalRl or CSS.WritingMode.VerticalLr);
+
             if (isFlexOrGridContainer)
             {
                 WrapFlexOrGridTextSequences(box);
             }
-            else if (ContainsVariantBoxes(box))
+            else if (ContainsVariantBoxes(box) || wrapsInlineRunForColumns)
             {
                 for (int i = 0; i < box.Boxes.Count; i++)
                 {

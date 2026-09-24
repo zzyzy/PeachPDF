@@ -4010,8 +4010,12 @@ namespace PeachPDF.Html.Core.Dom
                     // ContainsInlinesOnly's set of "inline-compatible" children grew.
                     var dispatchesToColumnsEngine = EstablishesMultiColumnContext && Boxes.Count > 0
                         && (!DomUtils.ContainsInlinesOnly(this) || Boxes.Any(b => b.IsFloated));
+                    // Monolithic content does not fragment across pages (css-break-3 §4.1), and that
+                    // is independent of whether its own content is columnized: a multi-column scroll
+                    // container still lays its columns out internally, it just cannot be cut in half
+                    // by a page boundary. This condition used to exclude any box dispatching to the
+                    // columns engine, which conflated the two and let such a box break.
                     var suppressMonolithicBreaking = MonolithicContent.IsMonolithic(this)
-                        && !dispatchesToColumnsEngine
                         && DerivedStyle.ActualDisplay is not (Keywords.TableCell or Keywords.TableCaption);
                     var suppressingContainer = suppressMonolithicBreaking ? HtmlContainer : null;
                     var suppressedFragmentainer = suppressingContainer?.DetachFragmentainer();
