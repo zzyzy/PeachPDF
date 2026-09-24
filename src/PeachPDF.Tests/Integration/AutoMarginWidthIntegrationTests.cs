@@ -147,6 +147,50 @@ namespace PeachPDF.Tests.Integration
             Assert.Equal(expected, CssLayoutEngine.GetActualMarginRight(table, 100.0), 3);
         }
 
+        // CSS 2.1 §10.3.3's other half: with exactly one auto margin, that margin takes whatever the
+        // width and the other margin leave over. A table reaches this the same way it reaches the
+        // centering case above - through the width its own engine settles and passes back - which is
+        // what these two pin, because the shrink-to-fit width makes IsInFlowBlockLevel report false
+        // and the rule would otherwise be skipped for a table entirely.
+        [Fact]
+        public async Task Table_MarginLeftAuto_TakesTheLeftoverSpace_AndSitsAtTheEndEdge()
+        {
+            var html = Wrap("<div id='wrap' style='width:200pt'>"
+                + "<table id='t' style='width:100pt; margin-left:auto; margin-right:0'><tr><td>A</td></tr></table></div>");
+            var (root, _) = await BuildAndLayout(html);
+            var table = FindById(root, "t")!;
+
+            // 200pt of containing block less the table's 100pt, all of it on the start side.
+            Assert.Equal(100.0, CssLayoutEngine.GetActualMarginLeft(table, 100.0), 3);
+            Assert.Equal(0.0, CssLayoutEngine.GetActualMarginRight(table, 100.0), 3);
+        }
+
+        [Fact]
+        public async Task Table_MarginRightAuto_TakesTheLeftoverSpace_AndStaysAtTheStartEdge()
+        {
+            var html = Wrap("<div id='wrap' style='width:200pt'>"
+                + "<table id='t' style='width:100pt; margin-left:0; margin-right:auto'><tr><td>A</td></tr></table></div>");
+            var (root, _) = await BuildAndLayout(html);
+            var table = FindById(root, "t")!;
+
+            // The mirror of the case above. It looks the same on an LTR page, but the resolved margin
+            // is not the same number, and anything reading the table's own end edge sees the difference.
+            Assert.Equal(0.0, CssLayoutEngine.GetActualMarginLeft(table, 100.0), 3);
+            Assert.Equal(100.0, CssLayoutEngine.GetActualMarginRight(table, 100.0), 3);
+        }
+
+        [Fact]
+        public async Task Table_MarginLeftAuto_WiderThanItsContainingBlock_ClampsToZero()
+        {
+            var html = Wrap("<div id='wrap' style='width:100pt'>"
+                + "<table id='t' style='width:200pt; margin-left:auto; margin-right:0'><tr><td>A</td></tr></table></div>");
+            var (root, _) = await BuildAndLayout(html);
+            var table = FindById(root, "t")!;
+
+            // Negative free space: the auto margin is 0, not a negative pull toward the start edge.
+            Assert.Equal(0.0, CssLayoutEngine.GetActualMarginLeft(table, 200.0), 3);
+        }
+
         private static string Wrap(string body) =>
             $"<!DOCTYPE html><html><head><style>body,html{{margin:0}}</style></head><body>{body}</body></html>";
 
