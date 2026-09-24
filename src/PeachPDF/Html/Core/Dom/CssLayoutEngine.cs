@@ -1493,7 +1493,9 @@ namespace PeachPDF.Html.Core.Dom
             // this pinned `margin-left: auto` boxes - and so `<hr align=right>`'s mapping - to the start edge.
             if (box.MarginRight.Value.IsValue)
             {
-                return IsInFlowBlockLevel(box) ? ResolveSingleAutoHorizontalMargin(box, box.ActualMarginRight) : 0;
+                return CanResolveASingleAutoMargin(box, boxWidth)
+                    ? ResolveSingleAutoHorizontalMargin(box, box.ActualMarginRight, boxWidth)
+                    : 0;
             }
 
             if (box.DerivedStyle.ActualDisplay.StartsWith("table-") && box.DerivedStyle.ActualDisplay != Keywords.TableCaption)
@@ -1527,7 +1529,9 @@ namespace PeachPDF.Html.Core.Dom
 
             if (box.MarginLeft.Value.IsValue)
             {
-                return IsInFlowBlockLevel(box) ? ResolveSingleAutoHorizontalMargin(box, box.ActualMarginLeft) : 0;
+                return CanResolveASingleAutoMargin(box, boxWidth)
+                    ? ResolveSingleAutoHorizontalMargin(box, box.ActualMarginLeft, boxWidth)
+                    : 0;
             }
 
             if (box.DerivedStyle.ActualDisplay.StartsWith("table-") && box.DerivedStyle.ActualDisplay != Keywords.TableCaption)
@@ -1577,8 +1581,24 @@ namespace PeachPDF.Html.Core.Dom
         /// block, so its slack is 0 unless a <c>max-width</c> narrows it - the same "definite" test the
         /// both-<c>auto</c> case makes.
         /// </remarks>
-        private static double ResolveSingleAutoHorizontalMargin(CssBox box, double otherMargin) =>
-            Math.Max(0, FreeInlineSpace(box) - otherMargin);
+        private static double ResolveSingleAutoHorizontalMargin(CssBox box, double otherMargin, double? usedWidth = null) =>
+            Math.Max(0, FreeInlineSpace(box, usedWidth) - otherMargin);
+
+        /// <summary>
+        /// Whether CSS 2.1 §10.3.3's "the used value follows from the equality" can be applied to
+        /// <paramref name="box"/> - which needs both a box the rule covers and a used width to subtract.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="IsInFlowBlockLevel"/> answers it for a box that fills its containing block, because
+        /// that box's own width is already known here. A shrink-to-fit block-level box - a table
+        /// (CSS 2.1 §17.5.2) - does not fill it and has no settled width until its engine has run, so it
+        /// fails that test even though the rule covers it just the same. The engine calls back with the
+        /// width it settled on, and a non-null <paramref name="usedWidth"/> is that callback: the same
+        /// deferral the centering path already relies on, which is why a `margin: 0 auto` table has always
+        /// centered while a lone `margin-left: auto` one stayed pinned to the start edge.
+        /// </remarks>
+        private static bool CanResolveASingleAutoMargin(CssBox box, double? usedWidth) =>
+            IsInFlowBlockLevel(box) || usedWidth is not null;
 
         /// <summary>
         /// Whether <paramref name="box"/> is an ordinary in-flow, block-level box - the only kind CSS 2.1
@@ -1594,8 +1614,15 @@ namespace PeachPDF.Html.Core.Dom
         /// it, ignoring its margins: the quantity <c>auto</c> margins are resolved from. Negative when the
         /// box is wider than the block, which callers clamp.
         /// </summary>
-        private static double FreeInlineSpace(CssBox box)
+        private static double FreeInlineSpace(CssBox box, double? usedWidth = null)
         {
+            // A width the caller already settled (the table engine's own callback) wins over every
+            // branch below, all of which exist to work one out from style.
+            if (usedWidth is not null)
+            {
+                return box.ContainingBlock.AvailableWidth - usedWidth.Value;
+            }
+
             // The containing block's CONTENT width, which is what §10.3.3's constraint is stated over
             // (§10.1 puts the containing block at the content edge of the nearest block container
             // ancestor). Size.Width is that only under `content-box`; under `border-box` it is the border
