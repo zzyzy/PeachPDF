@@ -224,7 +224,13 @@ namespace PeachPDF.Fonts
 
         internal static bool IsSupportedFontFile(string path) =>
             path.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
-            path.EndsWith(".otf", StringComparison.OrdinalIgnoreCase);
+            path.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) ||
+            // Collections carry the CJK coverage on most distributions: Noto
+            // CJK is one .ttc holding the Japanese, Korean and Chinese
+            // families. Dropping them here is why a Chinese codepoint had no
+            // face to fall back to.
+            path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".otc", StringComparison.OrdinalIgnoreCase);
 
         public static string[] Resolve()
         {

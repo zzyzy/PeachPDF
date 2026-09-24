@@ -37,9 +37,32 @@ namespace PeachPDF.Fonts
         /// </summary>
         public int Stretch { get; init; }
 
-        public static TtfFontDescription LoadDescription(string path)
+        public static TtfFontDescription LoadDescription(string path) => LoadDescription(path, faceIndex: 0);
+
+        /// <summary>
+        /// Describes one face of a font file. A collection (.ttc/.otc) holds
+        /// several; a plain font file has only face 0.
+        /// </summary>
+        public static TtfFontDescription LoadDescription(string path, int faceIndex)
         {
-            using var stream = File.OpenRead(path);
+            if (faceIndex == 0)
+            {
+                // The common case reads the file as a stream rather than
+                // pulling a multi-megabyte font into memory to describe it.
+                using var probe = File.OpenRead(path);
+
+                Span<byte> tag = stackalloc byte[4];
+                probe.ReadExactly(tag);
+
+                if (!TrueTypeCollection.IsCollection(tag))
+                {
+                    probe.Position = 0;
+                    return LoadDescription(probe);
+                }
+            }
+
+            var face = TrueTypeCollection.ExtractFace(File.ReadAllBytes(path), faceIndex);
+            using var stream = new MemoryStream(face, writable: false);
             return LoadDescription(stream);
         }
 

@@ -23,7 +23,7 @@ namespace PeachPDF.Fonts
 
     internal class FontResolver : IFontResolver
     {
-        private static readonly FrozenDictionary<string, string> _systemFontPaths;
+        private static readonly FrozenDictionary<string, FontFaceFile> _systemFontPaths;
         private static readonly FrozenDictionary<string, FontFamilyModel> _systemFamilies;
 
         // A system font file never changes during the process's lifetime (same rationale as
@@ -115,7 +115,7 @@ namespace PeachPDF.Fonts
         /// </summary>
         internal static IEnumerable<string> SystemFamilyDisplayNames => _systemFamilies.Values.Select(f => f.Name);
 
-        private static readonly string[] FontExtensions = ["*.ttf", "*.otf"];
+        private static readonly string[] FontExtensions = ["*.ttf", "*.otf", "*.ttc", "*.otc"];
 
         private static string[] GetFontFiles(string dir)
         {
@@ -215,6 +215,12 @@ namespace PeachPDF.Fonts
         {
             InstalledFonts = new Dictionary<string, FontFamilyModel>(_systemFamilies);
         }
+
+        /// <summary>
+        /// Where a face's bytes live: a file, and which face of it. A
+        /// collection holds several, so the path alone does not say.
+        /// </summary>
+        private readonly record struct FontFaceFile(string Path, int FaceIndex);
 
         private readonly struct FontFileInfo
         {
@@ -349,22 +355,38 @@ namespace PeachPDF.Fonts
             return true;
         }
 
-        private static (FrozenDictionary<string, string> Paths, FrozenDictionary<string, FontFamilyModel> Families) ParseSystemFonts(string[] sSupportedFonts)
+        private static (FrozenDictionary<string, FontFaceFile> Paths, FrozenDictionary<string, FontFamilyModel> Families) ParseSystemFonts(string[] sSupportedFonts)
         {
-            var fontPaths = new Dictionary<string, string>();
+            var fontPaths = new Dictionary<string, FontFaceFile>();
             var tempFontInfoList = new List<FontFileInfo>();
 
             foreach (var fontPathFile in sSupportedFonts)
             {
                 try
                 {
-                    var fontInfo = FontFileInfo.Load(fontPathFile);
-                    Debug.WriteLine(fontPathFile);
-                    tempFontInfoList.Add(fontInfo);
+                    // A collection contributes each of its faces separately:
+                    // Noto CJK ships one file holding the Japanese, Korean and
+                    // both Chinese families, and a caller asking for any one of
+                    // them has to find it by its own name.
+                    var bytes = File.ReadAllBytes(fontPathFile);
+                    var faceCount = TrueTypeCollection.GetFaceCount(bytes);
 
-                    if (!fontPaths.ContainsKey(fontInfo.FontDescription.FontNameInvariantCulture))
+                    for (var faceIndex = 0; faceIndex < faceCount; faceIndex++)
                     {
-                        fontPaths.Add(fontInfo.FontDescription.FontNameInvariantCulture, fontPathFile);
+                        var faceBytes = TrueTypeCollection.ExtractFace(bytes, faceIndex);
+
+                        using var faceStream = new MemoryStream(faceBytes, writable: false);
+                        var fontInfo = FontFileInfo.Load(faceStream);
+
+                        Debug.WriteLine(fontPathFile);
+                        tempFontInfoList.Add(fontInfo);
+
+                        if (!fontPaths.ContainsKey(fontInfo.FontDescription.FontNameInvariantCulture))
+                        {
+                            fontPaths.Add(
+                                fontInfo.FontDescription.FontNameInvariantCulture,
+                                new FontFaceFile(fontPathFile, faceIndex));
+                        }
                     }
                 }
                 catch (System.Exception e)
@@ -416,9 +438,14 @@ namespace PeachPDF.Fonts
                 return fontBytes;
             }
 
-            if (_systemFontPaths.TryGetValue(fontFaceName, out var fontPath))
+            if (_systemFontPaths.TryGetValue(fontFaceName, out var fontFace))
             {
-                return _systemFontBytesCache.GetOrAdd(fontPath, File.ReadAllBytes);
+                // Keyed by face rather than by file, so the several faces of a
+                // collection do not collide on one entry -- and so a caller is
+                // handed one font rather than the collection that holds it.
+                return _systemFontBytesCache.GetOrAdd(
+                    $"{fontFace.Path}#{fontFace.FaceIndex}",
+                    _ => TrueTypeCollection.ExtractFace(File.ReadAllBytes(fontFace.Path), fontFace.FaceIndex));
             }
 
             throw new ArgumentOutOfRangeException(nameof(fontFaceName), "Unknown Font Face Name");
