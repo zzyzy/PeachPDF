@@ -29,6 +29,9 @@
 
 #nullable disable warnings
 
+using System;
+using System.Collections.Generic;
+
 using PeachPDF.PdfSharpCore.Drawing;
 using PeachPDF.Fonts.OpenType;
 using PeachPDF.PdfSharpCore.Pdf.Filters;
@@ -79,6 +82,32 @@ namespace PeachPDF.PdfSharpCore.Pdf.Advanced
         }
 
         /// <summary>
+        /// Rewrites the font's CFF table to hold only the glyphs this document
+        /// draws, or returns null when it cannot be rewritten safely.
+        /// </summary>
+        private static byte[]? TrySubsetCff(OpenTypeFontface fontFace, IEnumerable<int> usedGlyphs)
+        {
+            if (!fontFace.TableDictionary.TryGetValue("CFF ", out var entry))
+                return null;
+
+            // Only a CID keyed CFF may be embedded on its own, as
+            // CIDFontType0C. A plain CFF in a CIDFont has to stay inside the
+            // OpenType file that carries the mapping, so it is left whole.
+            if (fontFace.cff is null || !fontFace.cff.IsCidKeyed)
+                return null;
+
+            var source = fontFace.FontSource.Bytes;
+
+            if (entry.Offset < 0 || entry.Length <= 0 || entry.Offset + entry.Length > source.Length)
+                return null;
+
+            var cff = new byte[entry.Length];
+            Array.Copy(source, entry.Offset, cff, 0, entry.Length);
+
+            return CffSubsetter.Subset(cff, [.. usedGlyphs]);
+        }
+
+        /// <summary>
         /// Prepares the object to get saved.
         /// </summary>
         internal override void PrepareForSave()
@@ -92,19 +121,46 @@ namespace PeachPDF.PdfSharpCore.Pdf.Advanced
             }
 #endif
             // CID fonts must be always embedded. PDFsharp embedds automatically a subset.
-            OpenTypeFontface subSet = null;
-            if (FontDescriptor._descriptor.FontFace.loca == null)
-                subSet = FontDescriptor._descriptor.FontFace;
+            var fontFace = FontDescriptor._descriptor.FontFace;
+            bool isCff = fontFace.loca == null;
+
+            byte[] fontData;
+            string fontFileSubtype = "/OpenType";
+
+            if (isCff)
+            {
+                // A CFF font keeps its outlines in the CFF table, so the glyph
+                // subsetting below - which rewrites glyf and loca - cannot
+                // touch it. Without this the whole face goes into the PDF: a
+                // CJK font puts tens of megabytes into a document that prints
+                // a name.
+                byte[]? subsetCff = TrySubsetCff(fontFace, _cmapInfo.GlyphIndices.Keys);
+
+                if (subsetCff is not null)
+                {
+                    // The bare CFF rather than the OpenType file that held it:
+                    // it is what a CIDFontType0 descendant is defined to carry,
+                    // and it leaves behind the layout and mapping tables, which
+                    // in a CJK font are megabytes a PDF viewer never reads.
+                    fontData = subsetCff;
+                    fontFileSubtype = "/CIDFontType0C";
+                }
+                else
+                {
+                    fontData = fontFace.FontSource.Bytes;
+                }
+            }
             else
-                subSet = FontDescriptor._descriptor.FontFace.CreateFontSubSet(_cmapInfo.GlyphIndices, true);
-            byte[] fontData = subSet.FontSource.Bytes;
+            {
+                fontData = fontFace.CreateFontSubSet(_cmapInfo.GlyphIndices, true).FontSource.Bytes;
+            }
+
             PdfDictionary fontStream = new PdfDictionary(Owner);
             Owner.Internals.AddObject(fontStream);
-            bool isCff = FontDescriptor._descriptor.FontFace.loca == null;
             if (isCff)
             {
                 FontDescriptor.Elements[PdfFontDescriptor.Keys.FontFile3] = fontStream.Reference;
-                fontStream.Elements.SetName("/Subtype", "/OpenType");
+                fontStream.Elements.SetName("/Subtype", fontFileSubtype);
             }
             else
             {
