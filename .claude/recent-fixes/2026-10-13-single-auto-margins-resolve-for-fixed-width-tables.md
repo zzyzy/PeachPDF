@@ -1,0 +1,9 @@
+# Single auto margins resolve for fixed-width tables
+
+A shrink-to-fit table's layout engine knows its used width only after it has negotiated the columns. CSS 2.1 §17.4 puts a table's margins on its block-level table wrapper, so §10.3.3's single-auto rule applies there too. `CssLayoutEngineTable` already passes that settled width to `GetActualMarginLeft` for the both-auto centering case, but the single-auto resolver admitted only ordinary in-flow blocks (`IsInFlowBlockLevel`) and returned zero for tables.
+
+The fix treats a non-null width passed by the table engine as the evidence that the table's used width is now known. The single-auto path computes free space from `ContainingContentWidth - usedWidth`, subtracts the other margin and clamps the result to zero. A null width still means the table has not reached its width-settled callback; it must not guess or recursively measure the table during initial placement. Ordinary block behavior and the established both-auto table-centering path remain unchanged.
+
+`AutoMarginWidthIntegrationTests` now checks the resolved margins and final table position/width for left-auto, right-auto and over-wide cases. The `table_auto_margins` TestHarness showcase presents the two one-auto cases beside the existing centered comparison. A Release TestHarness run generated all 221 showcases, including this one; PDFium and MuPDF both show the same three placements. The full net8.0 PeachPDF test suite passed (16,458 passed, 9 skipped), the full solution rebuild had zero warnings, and diff coverage against `main` was 100% on the changed production lines.
+
+Not closed here: a narrow table in an `rtl` containing block is still anchored at the physical left rather than the right-hand inline-start edge. Issue #1251 remains open; the accepted-gap note and support matrix now describe only that remaining behavior.

@@ -164,6 +164,8 @@ namespace PeachPDF.Tests.Integration
             // 200pt of containing block less the table's 100pt, all of it on the start side.
             Assert.Equal(100.0, CssLayoutEngine.GetActualMarginLeft(table, 100.0), 3);
             Assert.Equal(0.0, CssLayoutEngine.GetActualMarginRight(table, 100.0), 3);
+            Assert.Equal(100.0, table.Location.X, 3);
+            Assert.Equal(100.0, table.ActualWidth, 3);
         }
 
         [Fact]
@@ -178,6 +180,8 @@ namespace PeachPDF.Tests.Integration
             // is not the same number, and anything reading the table's own end edge sees the difference.
             Assert.Equal(0.0, CssLayoutEngine.GetActualMarginLeft(table, 100.0), 3);
             Assert.Equal(100.0, CssLayoutEngine.GetActualMarginRight(table, 100.0), 3);
+            Assert.Equal(0.0, table.Location.X, 3);
+            Assert.Equal(100.0, table.ActualWidth, 3);
         }
 
         [Fact]
@@ -190,6 +194,8 @@ namespace PeachPDF.Tests.Integration
 
             // Negative free space: the auto margin is 0, not a negative pull toward the start edge.
             Assert.Equal(0.0, CssLayoutEngine.GetActualMarginLeft(table, 200.0), 3);
+            Assert.Equal(0.0, table.Location.X, 3);
+            Assert.Equal(200.0, table.ActualWidth, 3);
         }
 
         private static string Wrap(string body) =>
